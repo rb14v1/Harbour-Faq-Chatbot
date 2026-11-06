@@ -1,0 +1,23 @@
+Django==5.0.9
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+psycopg2-binary==2.9.9
+django-cors-headers==4.4.0
+django-filter==24.3
+python-decouple==3.8
+
+# Vector search - pgvector.django.VectorField on Postgres, JSONField fallback
+# on SQLite (dev only, USE_SQLITE=True). See apps/common/embedding_field.py.
+pgvector==0.3.6
+
+# Only imported/called when OPENAI_API_KEY is set (apps/common/ai.py).
+# Without a key, embeddings/chat responses come from deterministic stubs so
+# the whole pipeline is testable with no network access or API cost.
+openai==1.54.4
+
+gunicorn==23.0.0
+
+# dev/test only (fine to keep in the single requirements file for this
+# demo app; split into base/dev/prod requirement files if this grows)
+pytest==8.3.3
+pytest-django==4.9.0
