@@ -53,32 +53,51 @@ def _stub_embedding(text: str, dimensions: int) -> list[float]:
     return [v / norm for v in vector]
 
 
-def get_embedding(text: str) -> list[float]:
+def get_embedding(text: str, *, allow_remote: bool = True) -> list[float]:
     """
     Return an embedding vector for `text`.
 
-    Real path (OPENAI_API_KEY set): calls OpenAI's embeddings API using
-    OPENAI_EMBEDDING_MODEL (default text-embedding-3-large), requesting
-    EMBEDDING_DIMENSIONS via the API's `dimensions` param.
+    Real path (OPENAI_API_KEY set, allow_remote): calls OpenAI's embeddings
+    API using OPENAI_EMBEDDING_MODEL (default text-embedding-3-large),
+    requesting EMBEDDING_DIMENSIONS via the API's `dimensions` param.
 
-    Stub path (no key): deterministic pseudo-random vector, see module
-    docstring - NOT semantically meaningful, just reproducible so the
-    pipeline is fully testable without a key or network access.
+    Stub path (no key, allow_remote=False, or any failure on the real path):
+    deterministic pseudo-random vector, see module docstring - NOT
+    semantically meaningful, just reproducible so the pipeline is fully
+    testable without a key or network access.
+
+    Pass allow_remote=False from any caller that must not depend on a
+    network service - the seed-data migration does, so that applying
+    migrations never reaches out to a model.
+
+    A failure on the real path falls back to the stub rather than
+    propagating. It used to propagate, which meant a dependency or network
+    fault inside the seed migration failed `manage.py migrate` and with it
+    the deploy. The vector is the wrong one either way; a wrong vector is
+    recoverable by re-embedding, a failed migration is not.
     """
     dimensions = getattr(settings, "EMBEDDING_DIMENSIONS", 1536)
     api_key = getattr(settings, "OPENAI_API_KEY", "") or ""
 
-    if not api_key:
+    if not allow_remote or not api_key:
         return _stub_embedding(text, dimensions)
 
-    client = _client()
     model = getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
-    response = client.embeddings.create(
-        model=model,
-        input=text,
-        dimensions=dimensions,
-    )
-    return response.data[0].embedding
+    try:
+        client = _client()
+        response = client.embeddings.create(
+            model=model,
+            input=text,
+            dimensions=dimensions,
+        )
+    except Exception:  # noqa: BLE001 - never let an AI/network error crash the caller
+        return _stub_embedding(text, dimensions)
+    vector = response.data[0].embedding
+    # A vector of the wrong width cannot go into a fixed-width pgvector
+    # column, so it is rejected here rather than at the INSERT.
+    if len(vector) != dimensions:
+        return _stub_embedding(text, dimensions)
+    return vector
 
 
 def generate_answer(question: str, context_snippets: list[str]) -> str:
@@ -104,7 +123,6 @@ def generate_answer(question: str, context_snippets: list[str]) -> str:
             f"Found {len(context_snippets)} related FAQ(s). Top match: {top_match}"
         )
 
-    client = _client()
     model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-5.6-sol")
 
     context_block = "\n".join(f"- {snippet}" for snippet in context_snippets) or "(no matching FAQs found)"
@@ -122,5 +140,16 @@ def generate_answer(question: str, context_snippets: list[str]) -> str:
             "content": f"Context FAQs:\n{context_block}\n\nQuestion: {question}",
         },
     ]
-    response = client.chat.completions.create(model=model, messages=messages)
-    return response.choices[0].message.content
+    try:
+        client = _client()
+        response = client.chat.completions.create(model=model, messages=messages)
+        content = response.choices[0].message.content
+    except Exception:  # noqa: BLE001 - an AI/network error must not 500 the endpoint
+        content = None
+    if not (content or "").strip():
+        top_match = context_snippets[0][:200] if context_snippets else "none"
+        return (
+            f"[STUB AI RESPONSE — set OPENAI_API_KEY for real output] "
+            f"Found {len(context_snippets)} related FAQ(s). Top match: {top_match}"
+        )
+    return content

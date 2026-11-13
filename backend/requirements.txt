@@ -13,7 +13,13 @@ pgvector==0.3.6
 # Only imported/called when OPENAI_API_KEY is set (apps/common/ai.py).
 # Without a key, embeddings/chat responses come from deterministic stubs so
 # the whole pipeline is testable with no network access or API cost.
-openai==1.54.4
+# 1.55.3 is the floor: openai <= 1.55.2 passes `proxies=` to httpx.Client,
+# which httpx removed in 0.28.0. httpx is a transitive dependency and is not
+# pinned here, so pip resolves it to the current release - with 1.54.4 that
+# combination raised TypeError: Client.__init__() got an unexpected keyword
+# argument 'proxies' on every client construction, failing the deploy's
+# migration job.
+openai==1.55.3
 
 gunicorn==23.0.0
 

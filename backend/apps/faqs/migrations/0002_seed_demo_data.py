@@ -127,7 +127,12 @@ def seed_demo_data(apps, schema_editor):
             defaults={"answer": answer},
         )
         if created or not entry.embedding:
-            entry.embedding = get_embedding(f"{question}\n{answer}")
+            # allow_remote=False: applying migrations must never reach a
+            # model. A deployment platform runs this as a job carrying the
+            # app's production environment, so OPENAI_API_KEY is set here -
+            # without this the seed made one live embedding call per FAQ row,
+            # each able to fail the migration and with it the deploy.
+            entry.embedding = get_embedding(f"{question}\n{answer}", allow_remote=False)
             entry.save(update_fields=["embedding"])
 
 
