@@ -23,6 +23,25 @@ import random
 from django.conf import settings
 
 
+def _client():
+    """
+    An OpenAI client pointed at whichever OpenAI-compatible endpoint is configured.
+
+    With OPENAI_BASE_URL unset this is exactly the stock client talking to
+    api.openai.com, which is what this app did before. Set it to an Azure
+    OpenAI resource's `/openai/v1/` path and the same client and the same key
+    reach Azure instead — Azure serves an OpenAI-compatible surface there, so
+    no AzureOpenAI client and no branching is needed in either caller below.
+    """
+    from openai import OpenAI
+
+    api_key = getattr(settings, "OPENAI_API_KEY", "") or ""
+    base_url = getattr(settings, "OPENAI_BASE_URL", "") or ""
+    # Passing base_url=None would override the library's own default with
+    # nothing, so an unset value is left out of the call entirely.
+    return OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+
+
 def _stub_embedding(text: str, dimensions: int) -> list[float]:
     """Deterministic, reproducible, NOT semantically meaningful vector."""
     seed = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -52,9 +71,7 @@ def get_embedding(text: str) -> list[float]:
     if not api_key:
         return _stub_embedding(text, dimensions)
 
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
+    client = _client()
     model = getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
     response = client.embeddings.create(
         model=model,
@@ -87,9 +104,7 @@ def generate_answer(question: str, context_snippets: list[str]) -> str:
             f"Found {len(context_snippets)} related FAQ(s). Top match: {top_match}"
         )
 
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
+    client = _client()
     model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-5.6-sol")
 
     context_block = "\n".join(f"- {snippet}" for snippet in context_snippets) or "(no matching FAQs found)"
